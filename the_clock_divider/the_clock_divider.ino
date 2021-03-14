@@ -3,13 +3,20 @@
 
 #define INTERNAL_CLOCK_ANALOG_SYNC_RATIO 4
 #define EXTERNAL_CLOCK_ANALOG_SYNC_RATIO 2
+
 #define EVEN_ODD_PIN 12
 #define GATE_PIN 11
+#define TEMPO_PIN 1
 
-// MIDI clock, start and stop byte definitions - based on MIDI 1.0 Standards.
-#define MIDI_CLOCK 0xF8
-#define MIDI_START 0xFA
-#define MIDI_STOP  0xFC
+// input clock voltage threshold (2.5v)
+#define CLOCK_THRESHOLD 512
+
+// clock input pin
+#define CLOCK_PIN 5
+
+// reference to detect a jack on clock input pin
+#define NO_CLOCK_REF 725 //3.274
+#define NO_CLOCK_DELTA 80
 
 // Number of outputs
 const uint8_t pinCount = 5;
@@ -23,34 +30,8 @@ const static uint8_t oddsdiv[] = {1, 2, 3, 7, 11};
 bool even = true;
 bool gate = true;
 
-// The callback function wich will be called by Clock each Pulse of 96PPQN clock resolution.
-void ClockOut96PPQN(uint32_t * tick) 
-{
-  // Send MIDI_CLOCK to external gears
-  Serial.write(MIDI_CLOCK);
-}
-
 // the clock for analog outs! <3
 void clockOutput32PPQN(uint32_t* tick)
-{
-  
-  trigger(tick);
-}
-
-// The callback function wich will be called when clock starts by using Clock.start() method.
-void onClockStart() 
-{
-  Serial.write(MIDI_START);
-}
-
-// The callback function wich will be called when clock stops by using Clock.stop() method.
-void onClockStop() 
-{
-  Serial.write(MIDI_STOP);
-}
-
-
-void trigger(uint32_t* tick)
 {
   // traverse all outputs and related divisions
   for (uint8_t index = 0; index < pinCount; index++)
@@ -103,16 +84,19 @@ void setup()
   // Initialize serial communication at 31250 bits per second, the default MIDI serial speed communication:
   Serial.begin(31250);
 
+  for (uint32_t i = 0; i < pinCount; i++) {
+    pinMode(outJack[i], OUTPUT);
+  }
+
+  pinMode(EVEN_ODD_PIN, INPUT);
+  pinMode(GATE_PIN, INPUT);
+
   // Inits the clock
   uClock.init();
 
   // Set the callback functions
-  uClock.setClock96PPQNOutput(ClockOut96PPQN);
+//  uClock.setClock96PPQNOutput(ClockOut96PPQN);
   uClock.setClock32PPQNOutput(clockOutput32PPQN);
-
-  // Set the callback function for MIDI Start and Stop messages.
-  uClock.setOnClockStartOutput(onClockStart);  
-  uClock.setOnClockStopOutput(onClockStop);
 
   // Starts the clock, tick-tac-tick-tac...
   uClock.start();
@@ -120,17 +104,14 @@ void setup()
 }
 
 bool prevClock = LOW;
-uint32_t clockThresh = 512;
-int32_t noClockVolt = 731;
-int32_t noClockThresh = 5;
 
 void loop() 
 {
-  even = digitalRead(EVEN_ODD_PIN) == HIGH;
+  even = digitalRead(EVEN_ODD_PIN) == LOW;
   gate = digitalRead(GATE_PIN) == HIGH;
 
-  int32_t clockRead = analogRead(A5);
-  if (abs(noClockVolt - clockRead) > noClockThresh)
+  int32_t clockRead = analogRead(CLOCK_PIN);
+  if (abs(NO_CLOCK_REF - clockRead) > NO_CLOCK_DELTA)
   {
     // we have a clock input!
     if (uClock.getMode() != uClock.EXTERNAL_CLOCK)
@@ -138,12 +119,12 @@ void loop()
       uClock.setMode(uClock.EXTERNAL_CLOCK);
     }
     
-    if (clockRead >= clockThresh && prevClock == LOW)
+    if (clockRead >= CLOCK_THRESHOLD && prevClock == LOW)
     {
       uClock.clockMe();
       prevClock = HIGH;
     }
-    else if (clockRead < clockThresh && prevClock == HIGH)
+    else if (clockRead < CLOCK_THRESHOLD && prevClock == HIGH)
     {
       uClock.clockMe();
       prevClock = LOW;
@@ -156,8 +137,8 @@ void loop()
     {
       uClock.setMode(uClock.INTERNAL_CLOCK);
     }
-  
-    uClock.setTempo((analogRead(A1) / 1024.0 * 270.0) + 30.0);
+
+    uClock.setTempo((analogRead(TEMPO_PIN) / 1024.0 * 270.0) + 30.0);
   }
   delay(5);
 }

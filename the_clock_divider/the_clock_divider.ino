@@ -1,8 +1,9 @@
 #include "Arduino.h"
 #include <uClock.h>
 
-#define INTERNAL_CLOCK_ANALOG_SYNC_RATIO 4
-#define EXTERNAL_CLOCK_ANALOG_SYNC_RATIO 2
+#define CLOCK_ANALOG_SYNC_RATIO 4
+// #define INTERNAL_CLOCK_ANALOG_SYNC_RATIO 4
+// #define EXTERNAL_CLOCK_ANALOG_SYNC_RATIO 4
 
 #define EVEN_ODD_PIN 12
 #define GATE_PIN 11
@@ -15,8 +16,8 @@
 #define CLOCK_PIN 5
 
 // reference to detect a jack on clock input pin
-#define NO_CLOCK_REF 725 //3.274
-#define NO_CLOCK_DELTA 80
+#define NO_CLOCK_REF 14 //3.274
+#define NO_CLOCK_DELTA 8
 
 // Number of outputs
 const uint8_t pinCount = 5;
@@ -28,10 +29,30 @@ const static uint8_t oddsdiv[] = {1, 2, 3, 7, 11};
 
 // controls, even: select the division; gate: switch from trigger out to gate out
 bool even = true;
-bool gate = true;
+bool gate = false;
 
-// the clock for analog outs! <3
+// track clock state in External mode
+bool prevClock = LOW;
+
+uint32_t loopcount = 0;
+int32_t clockRead = 0;
+
+void ClockOut96PPQN(uint32_t* tick) {
+  if (uClock.getMode() == uClock.EXTERNAL_CLOCK)
+  {
+    calculateClocks(tick);
+  }
+}
+
 void clockOutput32PPQN(uint32_t* tick)
+{
+  if (uClock.getMode() == uClock.INTERNAL_CLOCK)
+  {
+    calculateClocks(tick);
+  }
+}
+
+void calculateClocks(uint32_t* tick)
 {
   // traverse all outputs and related divisions
   for (uint8_t index = 0; index < pinCount; index++)
@@ -44,16 +65,7 @@ void clockOutput32PPQN(uint32_t* tick)
 // here happens the magic
 bool count(uint32_t* tick, uint8_t index)
 {
-  uint8_t ratio = uClock.getMode() == uClock.INTERNAL_CLOCK ? INTERNAL_CLOCK_ANALOG_SYNC_RATIO : EXTERNAL_CLOCK_ANALOG_SYNC_RATIO;
-  // NOTES
-  // don't know, can be nice! return ((*tick % (ratio + index) ) == 0)
-  // a mess return ((*tick % (ratio * (index) + 1)) ) == 0) {
-
-  // QUANDO SONO SLAVE LA MODAITà GATE NON FUNZIONA BENE
-  // è POSSIBILE CHE IO DEBBA CAMBIARE IL MODO IN CUI GESTISCO 
-  // IL GATE, ANCHE IL MODO IN FACCIO LO SLAVE MI PUZZA
-  // SE ASCOLTO 16PPQN VENGO CLOCCATO ALLO STESSO MODO DI SLAVE
-  // PERò DEVO ASSOLUTAMENTE RIPENSARE LA LOGICA DEL GATE!!!!
+  uint8_t ratio = CLOCK_ANALOG_SYNC_RATIO;
 
   if (even == true && gate == true )
   {
@@ -95,7 +107,7 @@ void setup()
   uClock.init();
 
   // Set the callback functions
-//  uClock.setClock96PPQNOutput(ClockOut96PPQN);
+  uClock.setClock96PPQNOutput(ClockOut96PPQN);
   uClock.setClock32PPQNOutput(clockOutput32PPQN);
 
   // Starts the clock, tick-tac-tick-tac...
@@ -103,28 +115,33 @@ void setup()
 
 }
 
-bool prevClock = LOW;
-
 void loop() 
 {
-  even = digitalRead(EVEN_ODD_PIN) == LOW;
-  gate = digitalRead(GATE_PIN) == HIGH;
+  // don't read digital state every loop, is not necessary
+  if (loopcount % 10 == 0) {
+    even = digitalRead(EVEN_ODD_PIN) == LOW;
+    gate = digitalRead(GATE_PIN) == HIGH;
+  }
 
-  int32_t clockRead = analogRead(CLOCK_PIN);
+  clockRead = analogRead(CLOCK_PIN);
   if (abs(NO_CLOCK_REF - clockRead) > NO_CLOCK_DELTA)
   {
     // we have a clock input!
+
+    // switch to external clock if necessary
     if (uClock.getMode() != uClock.EXTERNAL_CLOCK)
     {
       uClock.setMode(uClock.EXTERNAL_CLOCK);
     }
-    
-    if (clockRead >= CLOCK_THRESHOLD && prevClock == LOW)
+
+    // sync internal clock only on state change
+    // clock input is inverted by the protection circuit
+    if (clockRead <= CLOCK_THRESHOLD && prevClock == LOW)
     {
       uClock.clockMe();
       prevClock = HIGH;
     }
-    else if (clockRead < CLOCK_THRESHOLD && prevClock == HIGH)
+    else if (clockRead > CLOCK_THRESHOLD && prevClock == HIGH)
     {
       uClock.clockMe();
       prevClock = LOW;
@@ -140,5 +157,7 @@ void loop()
 
     uClock.setTempo((analogRead(TEMPO_PIN) / 1024.0 * 270.0) + 30.0);
   }
-  delay(5);
+
+  loopcount++;
+  delay(1);
 }
